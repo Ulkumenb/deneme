@@ -176,13 +176,19 @@ function sifirla() {
    3) OYUN MANTIĞI: her karede çalışır (saniyede ~60 kez)
    ============================================================ */
 function guncelle() {
+  // Hareketler kare sayısına değil geçen süreye göre hesaplanır, böylece her ekranda aynı hızda çalışır.
+  // k = 1: ekran saniyede 60 kare çiziyor. 120 Hz ekranda k = 0,5; 30 kare/sn'de k = 2 olur.
+  const simdi = performance.now();
+  gecen = Math.min(simdi - sonKare, 100); sonKare = simdi;
+  const k = gecen / (1000 / 60);
+
   // Klavye ile kavanozu oynat
-  if (tuslar.ArrowLeft) kavanozX -= 6;
-  if (tuslar.ArrowRight) kavanozX += 6;
+  if (tuslar.ArrowLeft) kavanozX -= 6 * k;
+  if (tuslar.ArrowRight) kavanozX += 6 * k;
   kavanozX = Math.max(kw() / 2, Math.min(G - kw() / 2, kavanozX));
 
   // Yeni şey çıkar (böcek ya da taş)
-  if (Math.random() < AYAR.bocekSikligi + puan * 0.0003) {
+  if (Math.random() < (AYAR.bocekSikligi + puan * 0.0003) * k) {
     esyalar.push({ x: 20 + Math.random() * (G - 40), y: -20, ...(Math.random() < AYAR.tasOrani ? tasYarat() : {}) });
   }
 
@@ -193,8 +199,8 @@ function guncelle() {
   }
 
   // Ceza (ünlem) ve ödül (tik) toplarını zamanı gelince gönder
-  const simdi = performance.now();
-  gecen = Math.min(simdi - sonKare, 100); sonKare = simdi;
+  // (geçen süre farkı `k`, fonksiyonun başında hesaplandı)
+  
   if (sans(AYAR.korumaAraligi)) esyalar.push({ x: 20 + Math.random() * (G - 40), y: -20, koruma: true });
   // Siyah yıldız: belli bir puandan sonra, nadir ve tamamen şansına
   if (puan > AYAR.siyahYildizPuani && simdi >= yavasBitis && sans(AYAR.siyahYildizAraligi)) {
@@ -213,18 +219,18 @@ function guncelle() {
 
   if (hiz25 === Infinity && puan >= 25) hiz25 = hiz;   // 25. puandaki hızı hatırla
   const yavas = simdi < yavasBitis;                    // Siyah yıldız etkisi sürüyor mu?
-  if (!yavas) hiz += AYAR.hizlanma;                    // Yavaşken hız artışı durur
+  if (!yavas) hiz += AYAR.hizlanma * k;                    // Yavaşken hız artışı durur
   const etkinHiz = yavas ? Math.min(hiz, hiz25) : hiz;
   const kavanozUst = Y - 70;
 
   for (const e of esyalar) {
-    e.y += etkinHiz;
-    if (e.tas) e.aci += e.donus;
-    else if (Math.random() < 0.6) {   // Yıldız tozu: geçtiği yerde minik parıltılar bırakır
+    e.y += etkinHiz * k;
+    if (e.tas) e.aci += e.donus * k;
+    else if (Math.random() < 0.6 * k) {   // Yıldız tozu: geçtiği yerde minik parıltılar bırakır
       izler.push({ x: e.x + (Math.random() - 0.5) * 8, y: e.y - 4, vx: (Math.random() - 0.5) * 0.7, vy: Math.random() * 0.4, omur: 1, renk: izRengi(e) });
     }
   }
-  for (const p of izler) { p.x += p.vx; p.y += p.vy; p.omur -= 0.035; }
+  for (const p of izler) { p.x += p.vx * k; p.y += p.vy * k; p.omur -= 0.035 * k; }
   izler = izler.filter(p => p.omur > 0);
 
   // Yakalama ve kaçırma kontrolü

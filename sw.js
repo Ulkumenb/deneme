@@ -1,5 +1,5 @@
 // Oyunu ilk açılıştan sonra internetsiz de çalıştırmak için dosyaları önbelleğe alır.
-const SURUM = "atesbocegi-v1";
+const SURUM = "atesbocegi-v2";
 const DOSYALAR = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(SURUM).then(c => c.addAll(DOSYALAR))); self.skipWaiting(); });
 self.addEventListener("activate", e => {
