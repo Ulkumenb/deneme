@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1b1946">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ateş Böceği">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ateş Böceği Avı</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --gece: #1b1946;
+    --gece-koyu: #0e0d2b;
+    --bocek: #ffc857;
+    --kavanoz: #5ad1c4;
+    --tas: #8a6aa8;
+    --yazi: #f1eeff;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  html, body { height: 100%; margin: 0; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  body {
+    background: var(--gece-koyu); color: var(--yazi);
+    font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #sahne { position: relative; width: min(100vw, 420px); aspect-ratio: 9 / 14; max-height: 100%; }
+  canvas { width: 100%; height: 100%; display: block; border-radius: 14px; touch-action: none; background: var(--gece); }
+  #ekran {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; text-align: center; gap: 12px; padding: 24px;
+    background: rgba(14, 13, 43, .82); border-radius: 14px;
+  }
+  h1 { margin: 0; font-size: 2rem; color: var(--bocek); }
+  p { margin: 0; line-height: 1.5; max-width: 30ch; }
+  button {
+    font: inherit; font-weight: bold; padding: 12px 28px; border: 0; border-radius: 999px;
+    background: var(--bocek); color: var(--gece-koyu); cursor: pointer;
+  }
+  button:focus-visible { outline: 3px solid var(--kavanoz); outline-offset: 3px; }
+  .gizli { display: none !important; }
+</style>
+</head>
+<body>
+<div id="sahne">
+  <canvas id="tuval" width="360" height="560"></canvas>
+  <div id="ekran">
+    <h1 id="baslik">Ateş Böceği Avı</h1>
+    <p id="aciklama">Kavanozu kaydır, ateş böceklerini yakala. Taşlardan kaçın. Kırmızı yıldızdan kaç, sarı yıldızı yakala. Küçük şeffaf top seni 8 saniye korur. Üç hakkın var.</p>
+    <p id="kontrol">Parmakla ya da fareyle sürükle, ya da ← → tuşlarını kullan.</p>
+    <button id="baslat">Başla</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   1) AYARLAR: Oyunu değiştirmek için önce buradaki sayıları dene!
+   Bir sayıyı değiştir, sayfayı yenile, farkı gör.
+   ============================================================ */
+const AYAR = {
+  kavanozGenisligi: 40,   // Büyük sayı = yakalaması kolay
+  baslangicHizi: 2.2,     // Şeylerin düşme hızı
+  hizlanma: 0.0006,       // Oyun ilerledikçe ne kadar hızlansın
+  bocekSikligi: 0.03,     // Her karede yeni böcek çıkma şansı
+  kacirmaCezasi: false,   // true = kaçırdığın ateş böceği can götürür, false = sadece taşlar can götürür
+  cezaAraligi: 60,        // Ünlemli ceza topu ortalama kaç saniyede bir gelsin
+  odulAraligi: 60,        // Tikli ödül topu ortalama kaç saniyede bir gelsin
+  kucultme: 0.6,          // Ceza topu yakalanınca kavanoz bu kadar çarpılır (küçülür)
+  buyutme: 1.4,           // Ödül topu yakalanınca kavanoz bu kadar çarpılır (büyür)
+  enKucukCarpan: 0.6,     // Kavanoz en fazla ne kadar küçülebilir
+  enBuyukCarpan: 2.5,     // Kavanoz en fazla ne kadar büyüyebilir
+  korumaAraligi: 75,      // Şeffaf koruma topu ortalama kaç saniyede bir gelsin (şansa bağlı)
+  korumaSuresi: 8,        // Koruma kaç saniye sürsün
+  yildizTasYakinligi: 0.85, // Kırmızı/sarı yıldızın yanında taş çıkma şansı (0 ile 1 arası)
+  siyahYildizPuani: 175,  // Siyah yıldız bu puandan sonra gelmeye başlar
+  siyahYildizAraligi: 50, // Siyah yıldız ortalama kaç saniyede bir gelsin (şansa bağlı)
+  yavasSureMin: 8,        // Siyah yıldız yavaşlatması en az kaç saniye sürsün
+  yavasSureMax: 10,       // en fazla kaç saniye sürsün
+  paraPuani: 5,           // Altın para kaç puan versin
+  paraAraligi: 50,        // Her kaç puanda bir altın para gelsin
+  renkAraligi: 25,        // Her kaç puanda bir böcek rengi değişsin
+  tasOrani: 0.25,         // Çıkan şeylerin ne kadarı taş olsun (0 ile 1 arası)
+  can: 3                  // Kaç hakkın olsun
+};
+
+/* ============================================================
+   2) HAZIRLIK: tuval ve oyunun durumu
+   ============================================================ */
+const tuval = document.getElementById("tuval");
+const c = tuval.getContext("2d");
+const G = tuval.width, Y = tuval.height;
+
+let kavanozX, esyalar, puan, can, hiz, calisiyor, sonrakiPara, kavanozCarpani = 1, korumaBitis = 0, yavasBitis = 0, hiz25 = Infinity, mesaj = "", mesajBitis = 0, enYuksek = 0, tuslar = {};
+// Böcek renkleri: her renkAraligi puanda sıradaki renge geçilir
+const BOCEK_RENKLERI = ["#ffc857", "#ff7eb6", "#7ee8fa", "#b6ff7a", "#ff8a5c", "#c79bff"];
+const yildizlar = Array.from({ length: 40 }, () => ({ x: Math.random() * G, y: Math.random() * Y, r: Math.random() * 1.4 + .3 }));
+
+// Yardımcı küçük fonksiyonlar
+// Tamamen şans: her karede, geçen süreye göre küçük bir olasılık denenir.
+// Ortalama süre ayardaki gibi olur ama sıra ve aralık hiç belli olmaz.
+let gecen = 0, sonKare = performance.now();
+function sans(ortSn) { return Math.random() < gecen / (ortSn * 1000); }
+// Çarpışma: kavanozun dikdörtgeni ile topun/taşın yuvarlak alanı gerçekten kesişiyor mu?
+// Taşın çarpışma alanı görünüşünden biraz küçük, böylece ucu ucuna geçişler can götürmez.
+function degdi(e, ust) {
+  const r = e.tas ? 8 * e.olcek : e.koruma ? 9 : 12;
+  const sol = kavanozX - kw() / 2, sag = kavanozX + kw() / 2, alt = ust + 56;
+  const dx = Math.max(sol - e.x, 0, e.x - sag);
+  const dy = Math.max(ust - e.y, 0, e.y - alt);
+  return dx * dx + dy * dy < r * r;
+}
+// Yıldız tozu parçacıkları ve rengi
+let izler = [];
+function izRengi(e) {
+  if (e.para) return "#ffd24a";
+  if (e.siyah) return "#b58cff";
+  if (e.ceza) return "#e5484d";
+  if (e.odul) return "#ffd23f";
+  if (e.koruma) return "hsl(" + ((performance.now() / 4) % 360) + ",90%,70%)";
+  return BOCEK_RENKLERI[Math.floor(puan / AYAR.renkAraligi) % BOCEK_RENKLERI.length];
+}
+
+// Her taş farklı: 5-8 köşeli düzensiz bir şekil, biraz farklı boyut ve dönüş
+function tasYarat() {
+  const n = 5 + Math.floor(Math.random() * 4);
+  const sekil = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+    sekil.push([Math.cos(a) * (12 + Math.random() * 5), Math.sin(a) * (9 + Math.random() * 4)]);
+  }
+  return { tas: true, sekil, olcek: 0.75 + Math.random() * 0.55, aci: (Math.random() - 0.5) * 1.2, donus: (Math.random() - 0.5) * 0.04 };
+}
+
+// 5 köşeli yıldız çizer (rengi c.fillStyle belirler)
+function yildizCiz(x, y, r) {
+  c.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const yaricap = i % 2 ? r * 0.45 : r;
+    const a = -Math.PI / 2 + i * Math.PI / 5;
+    c.lineTo(x + Math.cos(a) * yaricap, y + Math.sin(a) * yaricap);
+  }
+  c.closePath(); c.fill();
+  c.shadowBlur = 0; c.lineWidth = 1.5; c.strokeStyle = "rgba(255,255,255,.75)"; c.stroke();
+}
+
+// Büyütme/küçültme yıldızının yanına çoğunlukla bir taş koyar: biraz fazla kaydırırsan taşa değersin
+function yanTas(e) {
+  if (Math.random() > AYAR.yildizTasYakinligi) return;
+  const yon = Math.random() < 0.5 ? -1 : 1;
+  let tx = e.x + yon * (42 + Math.random() * 16);
+  if (tx < 20 || tx > G - 20) tx = e.x - yon * (42 + Math.random() * 16);
+  esyalar.push({ x: tx, y: e.y - 4 + Math.random() * 10, ...tasYarat() });
+}
+
+function kw() { return AYAR.kavanozGenisligi * kavanozCarpani; }
+
+function duyur(m) { mesaj = m; mesajBitis = performance.now() + 1500; }
+
+function sifirla() {
+  kavanozX = G / 2; esyalar = []; puan = 0; can = AYAR.can; hiz = AYAR.baslangicHizi; calisiyor = true; sonrakiPara = AYAR.paraAraligi;
+  kavanozCarpani = 1; mesajBitis = 0; izler = [];
+  sonKare = performance.now();
+  korumaBitis = 0; yavasBitis = 0; hiz25 = Infinity;
+  gecen = 0;
+}
+
+/* ============================================================
+   3) OYUN MANTIĞI: her karede çalışır (saniyede ~60 kez)
+   ============================================================ */
+function guncelle() {
+  // Klavye ile kavanozu oynat
+  if (tuslar.ArrowLeft) kavanozX -= 6;
+  if (tuslar.ArrowRight) kavanozX += 6;
+  kavanozX = Math.max(kw() / 2, Math.min(G - kw() / 2, kavanozX));
+
+  // Yeni şey çıkar (böcek ya da taş)
+  if (Math.random() < AYAR.bocekSikligi + puan * 0.0003) {
+    esyalar.push({ x: 20 + Math.random() * (G - 40), y: -20, ...(Math.random() < AYAR.tasOrani ? tasYarat() : {}) });
+  }
+
+  // Puan eşiğe ulaşınca bir altın para gönder
+  if (puan >= sonrakiPara) {
+    esyalar.push({ x: 20 + Math.random() * (G - 40), y: -20, para: true });
+    sonrakiPara = (Math.floor(puan / AYAR.paraAraligi) + 1) * AYAR.paraAraligi;
+  }
+
+  // Ceza (ünlem) ve ödül (tik) toplarını zamanı gelince gönder
+  const simdi = performance.now();
+  gecen = Math.min(simdi - sonKare, 100); sonKare = simdi;
+  if (sans(AYAR.korumaAraligi)) esyalar.push({ x: 20 + Math.random() * (G - 40), y: -20, koruma: true });
+  // Siyah yıldız: belli bir puandan sonra, nadir ve tamamen şansına
+  if (puan > AYAR.siyahYildizPuani && simdi >= yavasBitis && sans(AYAR.siyahYildizAraligi)) {
+    esyalar.push({ x: 20 + Math.random() * (G - 40), y: -20, siyah: true });
+  }
+  if (sans(AYAR.cezaAraligi)) {
+    esyalar.push({ x: 20 + Math.random() * (G - 40), y: -20, ceza: true });
+    yanTas(esyalar[esyalar.length - 1]);
+    
+  }
+  if (sans(AYAR.odulAraligi)) {
+    esyalar.push({ x: 20 + Math.random() * (G - 40), y: -20, odul: true });
+    yanTas(esyalar[esyalar.length - 1]);
+    
+  }
+
+  if (hiz25 === Infinity && puan >= 25) hiz25 = hiz;   // 25. puandaki hızı hatırla
+  const yavas = simdi < yavasBitis;                    // Siyah yıldız etkisi sürüyor mu?
+  if (!yavas) hiz += AYAR.hizlanma;                    // Yavaşken hız artışı durur
+  const etkinHiz = yavas ? Math.min(hiz, hiz25) : hiz;
+  const kavanozUst = Y - 70;
+
+  for (const e of esyalar) {
+    e.y += etkinHiz;
+    if (e.tas) e.aci += e.donus;
+    else if (Math.random() < 0.6) {   // Yıldız tozu: geçtiği yerde minik parıltılar bırakır
+      izler.push({ x: e.x + (Math.random() - 0.5) * 8, y: e.y - 4, vx: (Math.random() - 0.5) * 0.7, vy: Math.random() * 0.4, omur: 1, renk: izRengi(e) });
+    }
+  }
+  for (const p of izler) { p.x += p.vx; p.y += p.vy; p.omur -= 0.035; }
+  izler = izler.filter(p => p.omur > 0);
+
+  // Yakalama ve kaçırma kontrolü
+  esyalar = esyalar.filter(e => {
+    const kavanozda = degdi(e, kavanozUst);
+    if (kavanozda) {
+      if (e.ceza) { kavanozCarpani = Math.max(AYAR.enKucukCarpan, kavanozCarpani * AYAR.kucultme); duyur("Kavanoz küçüldü!"); }
+      else if (e.odul) { kavanozCarpani = Math.min(AYAR.enBuyukCarpan, kavanozCarpani * AYAR.buyutme); duyur("Kavanoz büyüdü!"); }
+      else if (e.para) puan += AYAR.paraPuani; else if (e.siyah) { yavasBitis = performance.now() + (AYAR.yavasSureMin + Math.random() * (AYAR.yavasSureMax - AYAR.yavasSureMin)) * 1000; duyur("Zaman yavaşladı!"); }
+      else if (e.koruma) { korumaBitis = performance.now() + AYAR.korumaSuresi * 1000; duyur("Koruma aktif!"); }
+      else if (e.tas) { if (performance.now() >= korumaBitis) can--; }
+      else puan++;
+      return false;
+    }
+    if (e.y > Y + 20) {
+      if (!e.tas && !e.para && !e.ceza && !e.odul && !e.koruma && !e.siyah && AYAR.kacirmaCezasi) can--;        // Kaçırılan böcek bir hak götürür
+      return false;
+    }
+    return true;
+  });
+
+  if (can <= 0) bitir();
+}
+
+function bitir() {
+  calisiyor = false;
+  enYuksek = Math.max(enYuksek, puan);
+  document.getElementById("baslik").textContent = "Oyun bitti";
+  document.getElementById("aciklama").textContent = "Puanın: " + puan + ". En yüksek puan: " + enYuksek + ".";
+  document.getElementById("kontrol").classList.add("gizli");
+  document.getElementById("baslat").textContent = "Tekrar oyna";
+  document.getElementById("ekran").classList.remove("gizli");
+}
+
+/* ============================================================
+   4) ÇİZİM: ekrana ne çizileceği
+   ============================================================ */
+function ciz() {
+  c.clearRect(0, 0, G, Y);
+  const zemin = c.createLinearGradient(0, 0, 0, Y);
+  zemin.addColorStop(0, "#1b1946"); zemin.addColorStop(1, "#2d2a6e");
+  c.fillStyle = zemin; c.fillRect(0, 0, G, Y);
+  if (performance.now() < yavasBitis) { c.fillStyle = "rgba(120,80,200,.14)"; c.fillRect(0, 0, G, Y); }   // Yavaş zaman: hafif mor ton
+
+  c.fillStyle = "rgba(241,238,255,.6)";
+  for (const s of yildizlar) { c.beginPath(); c.arc(s.x, s.y, s.r, 0, 7); c.fill(); }
+
+  for (const p of izler) {   // Yıldız tozu: yavaşça süzülp sönen minik parıltılar
+    c.globalAlpha = Math.max(p.omur, 0) * 0.8; c.fillStyle = p.renk;
+    c.beginPath(); c.arc(p.x, p.y, 0.8 + p.omur * 1.6, 0, 7); c.fill();
+  }
+  c.globalAlpha = 1;
+
+  for (const e of esyalar) {
+    if (e.para) {
+      c.shadowColor = "#ffd24a"; c.shadowBlur = 16; c.fillStyle = "#ffd24a";
+      c.beginPath(); c.arc(e.x, e.y, 13, 0, 7); c.fill(); c.shadowBlur = 0;
+      c.strokeStyle = "#b8860b"; c.lineWidth = 2; c.stroke();
+      c.fillStyle = "#7a5200"; c.font = "bold 14px Trebuchet MS, sans-serif"; c.textAlign = "center";
+      c.fillText(AYAR.paraPuani, e.x, e.y + 5);
+    } else if (e.koruma) {
+      const ton = (performance.now() / 4) % 360;
+      c.shadowColor = "hsl(" + ton + ",90%,70%)"; c.shadowBlur = 10;
+      c.fillStyle = "hsla(" + ton + ",90%,70%,.55)";
+      c.beginPath(); c.arc(e.x, e.y, 5, 0, 7); c.fill(); c.shadowBlur = 0;
+      c.strokeStyle = "rgba(255,255,255,.6)"; c.lineWidth = 1; c.stroke();
+    } else if (e.siyah) {
+      c.shadowColor = "#b58cff"; c.shadowBlur = 16; c.fillStyle = "#0a0a12";
+      yildizCiz(e.x, e.y, 17); c.shadowBlur = 0;
+    } else if (e.ceza || e.odul) {
+      const rk = e.ceza ? "#e5484d" : "#ffd23f";
+      c.shadowColor = rk; c.shadowBlur = 16; c.fillStyle = rk;
+      yildizCiz(e.x, e.y, 17); c.shadowBlur = 0;
+      // Yıldız jeton: kırmızı = ceza (kavanoz küçülür), sarı = ödül (kavanoz büyür)
+      
+    } else if (e.tas) {
+      c.fillStyle = "#d3d6dc"; c.shadowBlur = 0;
+      c.save(); c.translate(e.x, e.y); c.rotate(e.aci); c.scale(e.olcek, e.olcek); c.translate(-e.x, -e.y);
+      c.beginPath();
+      e.sekil.forEach((n, i) => (i ? c.lineTo(e.x + n[0], e.y + n[1]) : c.moveTo(e.x + n[0], e.y + n[1])));
+      c.closePath(); c.fill();
+      // Taş kaplama: kenar çizgisi, üstte açık bir yansıma ve tuğla gibi derzler
+      c.lineWidth = 1.5; c.strokeStyle = "#8d9099"; c.stroke();
+      c.save(); c.clip();
+      c.fillStyle = "rgba(255,255,255,.4)"; c.fillRect(e.x - 16, e.y - 12, 32, 8);
+      c.lineWidth = 1.2; c.beginPath();
+      c.moveTo(e.x - 16, e.y - 4); c.lineTo(e.x + 16, e.y - 4);
+      c.moveTo(e.x - 16, e.y + 4); c.lineTo(e.x + 16, e.y + 4);
+      c.moveTo(e.x - 2, e.y - 12); c.lineTo(e.x - 2, e.y - 4);
+      c.moveTo(e.x - 9, e.y - 4); c.lineTo(e.x - 9, e.y + 4);
+      c.moveTo(e.x + 6, e.y - 4); c.lineTo(e.x + 6, e.y + 4);
+      c.moveTo(e.x + 1, e.y + 4); c.lineTo(e.x + 1, e.y + 12);
+      c.stroke(); c.restore();
+      c.restore();
+    } else {
+      const renk = BOCEK_RENKLERI[Math.floor(puan / AYAR.renkAraligi) % BOCEK_RENKLERI.length];
+      c.shadowBlur = 0; c.fillStyle = renk;
+      // Kayan yıldız izi: böceğin arkasında küçülen, solan noktalar
+      for (let i = 5; i >= 1; i--) {
+        c.globalAlpha = 0.5 - i * 0.08;
+        c.beginPath(); c.arc(e.x + Math.sin(performance.now() / 110 + i * 0.9 + e.x) * (i * 0.7), e.y - i * 6, 6 - i, 0, 7); c.fill();
+      }
+      c.globalAlpha = 1; c.shadowColor = renk; c.shadowBlur = 18;
+      c.beginPath(); c.arc(e.x, e.y, 7, 0, 7); c.fill(); c.shadowBlur = 0;
+    }
+  }
+
+  // Kavanoz
+  const w = kw(), ust = Y - 70;
+  c.shadowColor = "#5ad1c4"; c.shadowBlur = 14;
+  c.strokeStyle = "#5ad1c4"; c.lineWidth = 4; c.fillStyle = "rgba(90,209,196,.18)";
+  if (performance.now() < korumaBitis) {   // Koruma: hızlı yanıp sönen şeffaf renkler
+    const ton = (Math.floor(performance.now() / 80) * 67) % 360;
+    c.shadowColor = c.strokeStyle = "hsla(" + ton + ",95%,70%,.8)";
+    c.fillStyle = "hsla(" + ton + ",95%,70%,.3)";
+  }
+  c.beginPath(); c.roundRect(kavanozX - w / 2, ust, w, 56, [4, 4, 16, 16]); c.fill(); c.stroke();
+  c.shadowBlur = 0;
+
+  // Puan ve canlar
+  c.fillStyle = "#f1eeff"; c.font = "bold 22px Trebuchet MS, sans-serif"; c.textAlign = "left";
+  c.fillText("Puan: " + puan, 16, 34);
+  c.textAlign = "right"; c.fillText("♥".repeat(Math.max(can, 0)), G - 16, 34);
+  if (performance.now() < mesajBitis) { c.textAlign = "center"; c.fillStyle = "#ffc857"; c.fillText(mesaj, G / 2, 80); }
+}
+
+function dongu() {
+  if (calisiyor) guncelle();
+  ciz();
+  requestAnimationFrame(dongu);
+}
+
+/* ============================================================
+   5) KONTROLLER: parmak, fare ve klavye
+   ============================================================ */
+function isaretci(ev) {
+  const k = tuval.getBoundingClientRect();
+  kavanozX = (ev.clientX - k.left) * (G / k.width);
+}
+tuval.addEventListener("pointermove", isaretci);
+tuval.addEventListener("pointerdown", isaretci);
+addEventListener("keydown", e => { tuslar[e.key] = true; });
+addEventListener("keyup", e => { tuslar[e.key] = false; });
+
+document.getElementById("baslat").addEventListener("click", () => {
+  sifirla();
+  document.getElementById("ekran").classList.add("gizli");
+});
+
+sifirla(); calisiyor = false; dongu();
+
+if ("serviceWorker" in navigator) {
+  addEventListener("load", () => { navigator.serviceWorker.register("sw.js").catch(() => {}); });
+}
+</script>
+</body>
+</html>
